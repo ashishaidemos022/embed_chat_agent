@@ -31,10 +31,23 @@ export function EmbedAgentApp() {
     resetChat
   } = useEmbedChat(publicId || '', { persist: isWidget });
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isSending]);
+
+  useEffect(() => {
+    // Auto-resize the composer as the user types longer messages.
+    const textarea = composerRef.current;
+    if (!textarea) return;
+
+    textarea.style.height = 'auto';
+    const maxHeight = isWidget ? 180 : 240;
+    const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${newHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden';
+  }, [composer, isWidget]);
 
   const showTypingIndicator = isSending && messages[messages.length - 1]?.role === 'user';
 
@@ -215,10 +228,14 @@ export function EmbedAgentApp() {
             }}
             placeholder={composerPlaceholder}
             aria-label="Message composer"
+            ref={composerRef}
             className={cn(
               'flex-1 bg-transparent text-sm resize-none outline-none text-left placeholder:opacity-60',
               theme === 'light' ? 'placeholder:text-slate-400 text-slate-900' : 'placeholder:text-white/40 text-white'
             )}
+            style={{
+              minHeight: isWidget ? '40px' : '56px'
+            }}
           />
           <Button
             size="sm"
