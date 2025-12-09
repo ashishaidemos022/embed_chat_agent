@@ -63,7 +63,7 @@ export function EmbedAgentApp() {
         theme === 'light'
           ? 'bg-gradient-to-b from-slate-50 via-white to-slate-100 text-slate-900'
           : 'bg-[#040714] text-white',
-        isWidget ? 'w-full h-full max-w-sm' : ''
+        isWidget ? 'w-full h-full max-w-[450px]' : ''
       )}
     >
       <div className="pointer-events-none absolute inset-0 opacity-40">
