@@ -43,8 +43,8 @@
   iframeContainer.style.position = 'fixed';
   iframeContainer.style.bottom = '96px';
   iframeContainer.style.right = '24px';
-  iframeContainer.style.width = '360px';
-  iframeContainer.style.height = '520px';
+  iframeContainer.style.width = '500px';
+  iframeContainer.style.height = '700px';
   iframeContainer.style.borderRadius = '20px';
   iframeContainer.style.boxShadow = '0 20px 60px rgba(15,23,42,0.35)';
   iframeContainer.style.overflow = 'hidden';
