@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { runRagAugmentation } from '../lib/rag-service';
-import type { RagMode } from '../types/rag';
 
 export type EmbedMessage = {
   id: string;
@@ -17,6 +15,18 @@ export type EmbedAgentMeta = {
   knowledgeSpaceIds?: string[];
 };
 
+type RagMode = 'assist' | 'guardrail';
+
+type RagCitation = {
+  snippet: string;
+  title?: string | null;
+};
+
+type RagAugmentationResult = {
+  citations: RagCitation[];
+  guardrailTriggered?: boolean;
+};
+
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
@@ -25,6 +35,7 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 }
 
 const AGENT_CHAT_URL = `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/agent-chat`;
+const RAG_SERVICE_URL = `${SUPABASE_URL.replace(/\/$/, '')}/functions/v1/rag-service`;
 const SUPABASE_REQUEST_HEADERS = {
   'Content-Type': 'application/json',
   apikey: SUPABASE_ANON_KEY,
@@ -33,6 +44,38 @@ const SUPABASE_REQUEST_HEADERS = {
 
 function createStorageKey(publicId: string) {
   return `va-embed-history-${publicId}`;
+}
+
+async function runEmbedRagAugmentation(input: {
+  agentConfigId: string;
+  query: string;
+  ragMode: RagMode;
+  spaceIds: string[];
+  conversationId?: string;
+}): Promise<RagAugmentationResult> {
+  if (!input.spaceIds.length) {
+    throw new Error('No knowledge spaces connected');
+  }
+  const res = await fetch(RAG_SERVICE_URL, {
+    method: 'POST',
+    headers: SUPABASE_REQUEST_HEADERS,
+    body: JSON.stringify({
+      action: 'run_query',
+      agent_config_id: input.agentConfigId,
+      query: input.query,
+      space_ids: input.spaceIds,
+      rag_mode: input.ragMode,
+      conversation_id: input.conversationId
+    })
+  });
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(json?.error || 'RAG service call failed');
+  }
+  return {
+    citations: json?.citations || [],
+    guardrailTriggered: Boolean(json?.guardrail_triggered)
+  };
 }
 
 export function useEmbedChat(publicId: string, options?: { persist?: boolean }) {
@@ -138,14 +181,14 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
 
         if (shouldRunRag) {
           try {
-            const ragContext = await runRagAugmentation({
+            const ragContext = await runEmbedRagAugmentation({
               agentConfigId: agentMeta!.id as string,
               query: trimmed,
               ragMode: agentMeta!.ragMode || 'assist',
               spaceIds: agentMeta!.knowledgeSpaceIds || [],
               conversationId: sessionId || undefined
             });
-            const knowledgeLines = ragContext.citations.map((citation, index) => {
+            const knowledgeLines = ragContext.citations.map((citation: RagCitation, index: number) => {
               const label = `[${index + 1}]`;
               const title = citation.title ? ` • ${citation.title}` : '';
               return `${label} ${citation.snippet}${title}`;
