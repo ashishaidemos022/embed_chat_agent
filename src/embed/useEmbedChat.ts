@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { runRagAugmentation } from '../lib/rag-service';
+import type { RagMode } from '../types/rag';
 
 export type EmbedMessage = {
   id: string;
@@ -7,8 +9,12 @@ export type EmbedMessage = {
 };
 
 export type EmbedAgentMeta = {
+  id?: string | null;
   name: string;
   summary?: string | null;
+  ragEnabled?: boolean;
+  ragMode?: RagMode;
+  knowledgeSpaceIds?: string[];
 };
 
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
@@ -79,7 +85,19 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
         throw new Error('Embed not found');
       }
       const json = await response.json();
-      setAgentMeta(json.agent || null);
+      const knowledgeSpaceIds = Array.isArray(json.agent?.knowledge_spaces)
+        ? json.agent.knowledge_spaces
+            .map((space: any) => space?.space_id)
+            .filter((id: any): id is string => Boolean(id))
+        : [];
+      setAgentMeta({
+        id: json.agent?.id,
+        name: json.agent?.name || 'AI Agent',
+        summary: json.agent?.summary || null,
+        ragEnabled: Boolean(json.agent?.rag_enabled),
+        ragMode: json.agent?.rag_mode || 'assist',
+        knowledgeSpaceIds
+      });
     } catch (err: any) {
       setAgentMeta({
         name: 'AI Agent',
@@ -98,21 +116,56 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
     async (content: string) => {
       const trimmed = content.trim();
       if (!trimmed) return;
+
       const id = crypto.randomUUID();
       const pendingMessage: EmbedMessage = { id, role: 'user', content: trimmed };
-      const optimisticHistory = [...messages, pendingMessage];
-      setMessages(optimisticHistory);
+
+      // Apply optimistic UI update
+      setMessages((prev) => [...prev, pendingMessage]);
+
       setIsSending(true);
       setError(null);
       try {
+        const baseHistory = [...messages, pendingMessage];
+        const payloadMessages: { role: 'user' | 'assistant' | 'system'; content: string }[] =
+          baseHistory.map((message) => ({
+            role: message.role,
+            content: message.content
+          }));
+
+        const shouldRunRag =
+          agentMeta?.ragEnabled && (agentMeta.knowledgeSpaceIds?.length || 0) > 0 && Boolean(agentMeta.id);
+
+        if (shouldRunRag) {
+          try {
+            const ragContext = await runRagAugmentation({
+              agentConfigId: agentMeta!.id as string,
+              query: trimmed,
+              ragMode: agentMeta!.ragMode || 'assist',
+              spaceIds: agentMeta!.knowledgeSpaceIds || [],
+              conversationId: sessionId || undefined
+            });
+            const knowledgeLines = ragContext.citations.map((citation, index) => {
+              const label = `[${index + 1}]`;
+              const title = citation.title ? ` • ${citation.title}` : '';
+              return `${label} ${citation.snippet}${title}`;
+            });
+            if (knowledgeLines.length) {
+              const contextMessage = `Knowledge retrieved for this turn:\n${knowledgeLines.join(
+                '\n'
+              )}\nUse these citations when answering. If information is missing and you are in guardrail mode, decline gracefully.`;
+              payloadMessages.push({ role: 'system', content: contextMessage });
+            }
+          } catch (ragErr) {
+            console.warn('[embed-chat] RAG augmentation failed, proceeding without context', ragErr);
+          }
+        }
+
         const payload = {
           public_id: publicId,
           session_id: sessionId,
           client_session_id: storageKey || undefined,
-          messages: optimisticHistory.map((message) => ({
-            role: message.role,
-            content: message.content
-          }))
+          messages: payloadMessages
         };
         const response = await fetch(AGENT_CHAT_URL, {
           method: 'POST',
@@ -136,7 +189,7 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
         setIsSending(false);
       }
     },
-    [messages, publicId, sessionId, storageKey]
+    [agentMeta, messages, publicId, sessionId, storageKey]
   );
 
   const resetChat = useCallback(() => {
@@ -159,4 +212,3 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
     resetChat
   };
 }
-
