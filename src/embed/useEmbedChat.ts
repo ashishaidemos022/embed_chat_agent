@@ -15,6 +15,25 @@ export type EmbedAgentMeta = {
   knowledgeSpaceIds?: string[];
 };
 
+export type ChatEmbedAppearance = {
+  logo_url?: string | null;
+  brand_name?: string | null;
+  accent_color?: string | null;
+  background_color?: string | null;
+  surface_color?: string | null;
+  text_color?: string | null;
+  button_color?: string | null;
+  button_text_color?: string | null;
+  helper_text_color?: string | null;
+  corner_radius?: number | null;
+  font_family?: string | null;
+  wave_color?: string | null;
+  bubble_color?: string | null;
+  widget_width?: number | null;
+  widget_height?: number | null;
+  button_image_url?: string | null;
+};
+
 type RagMode = 'assist' | 'guardrail';
 
 type RagCitation = {
@@ -52,7 +71,7 @@ async function runEmbedRagAugmentation(input: {
   ragMode: RagMode;
   spaceIds: string[];
   conversationId?: string;
-}): Promise<RagAugmentationResult> {
+}): Promise<RagAugmentationResult | null> {
   if (!input.spaceIds.length) {
     throw new Error('No knowledge spaces connected');
   }
@@ -69,6 +88,10 @@ async function runEmbedRagAugmentation(input: {
     })
   });
   const json = await res.json();
+  if (res.status === 401) {
+    console.warn('[embed-chat] RAG service unauthorized for embed client');
+    return null;
+  }
   if (!res.ok) {
     throw new Error(json?.error || 'RAG service call failed');
   }
@@ -82,6 +105,7 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
   const [messages, setMessages] = useState<EmbedMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [agentMeta, setAgentMeta] = useState<EmbedAgentMeta | null>(null);
+  const [appearance, setAppearance] = useState<ChatEmbedAppearance | null>(null);
   const [isLoadingMeta, setIsLoadingMeta] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +165,7 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
         ragMode: json.agent?.rag_mode || 'assist',
         knowledgeSpaceIds
       });
+      setAppearance((json?.settings?.appearance as ChatEmbedAppearance) || null);
     } catch (err: any) {
       setAgentMeta({
         name: 'AI Agent',
@@ -188,16 +213,21 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
               spaceIds: agentMeta!.knowledgeSpaceIds || [],
               conversationId: sessionId || undefined
             });
-            const knowledgeLines = ragContext.citations.map((citation: RagCitation, index: number) => {
-              const label = `[${index + 1}]`;
-              const title = citation.title ? ` • ${citation.title}` : '';
-              return `${label} ${citation.snippet}${title}`;
-            });
-            if (knowledgeLines.length) {
-              const contextMessage = `Knowledge retrieved for this turn:\n${knowledgeLines.join(
-                '\n'
-              )}\nUse these citations when answering. If information is missing and you are in guardrail mode, decline gracefully.`;
-              payloadMessages.push({ role: 'system', content: contextMessage });
+            if (!ragContext) {
+              console.warn('[embed-chat] RAG unavailable; continuing without augmentation');
+            }
+            if (ragContext) {
+              const knowledgeLines = ragContext.citations.map((citation: RagCitation, index: number) => {
+                const label = `[${index + 1}]`;
+                const title = citation.title ? ` • ${citation.title}` : '';
+                return `${label} ${citation.snippet}${title}`;
+              });
+              if (knowledgeLines.length) {
+                const contextMessage = `Knowledge retrieved for this turn:\n${knowledgeLines.join(
+                  '\n'
+                )}\nUse these citations when answering. If information is missing and you are in guardrail mode, decline gracefully.`;
+                payloadMessages.push({ role: 'system', content: contextMessage });
+              }
             }
           } catch (ragErr) {
             console.warn('[embed-chat] RAG augmentation failed, proceeding without context', ragErr);
@@ -247,6 +277,7 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
   return {
     messages,
     agentMeta,
+    appearance,
     sessionId,
     isLoadingMeta,
     isSending,
