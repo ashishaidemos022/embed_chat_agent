@@ -17,6 +17,11 @@
 }
 
 @layer utilities {
+  .va-chat-input::placeholder {
+    color: var(--va-chat-placeholder);
+    opacity: 1;
+  }
+
   .chat-typing-dot {
     @apply h-1.5 w-1.5 rounded-full bg-current opacity-50;
     animation: chat-typing 1.1s ease-in-out infinite;
