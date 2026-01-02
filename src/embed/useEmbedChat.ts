@@ -29,6 +29,7 @@ export type ChatEmbedAppearance = {
   font_family?: string | null;
   wave_color?: string | null;
   bubble_color?: string | null;
+  logo_background_color?: string | null;
   widget_width?: number | null;
   widget_height?: number | null;
   button_image_url?: string | null;
