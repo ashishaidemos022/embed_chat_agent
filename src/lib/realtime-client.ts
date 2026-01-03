@@ -1,4 +1,4 @@
-import { RealtimeConfig } from '../types/voice-agent';
+import type { RealtimeConfig } from '../types/voice-agent';
 import { getToolSchemas } from './tools-registry';
 
 export type AgentState = 'idle' | 'listening' | 'speaking' | 'thinking' | 'interrupted';

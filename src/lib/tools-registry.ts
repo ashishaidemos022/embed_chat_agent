@@ -1,6 +1,6 @@
 import { supabase } from './supabase';
 import { mcpApiClient } from './mcp-api-client';
-import { normalizeMCPArguments, JSONSchema, resolveSchemaDefinition } from './mcp-normalizer';
+import { normalizeMCPArguments, resolveSchemaDefinition, type JSONSchema } from './mcp-normalizer';
 import { triggerN8NWebhook } from './n8n-service';
 import { buildN8NToolName, normalizeIdentifier } from './tool-utils';
 
@@ -55,6 +55,7 @@ export interface ToolExecutionContext {
   chatSessionId?: string;
   messageId?: string;
   chatMessageId?: string;
+  source?: string;
 }
 
 function findToolSchemaBySlug(slug?: string): Tool | undefined {

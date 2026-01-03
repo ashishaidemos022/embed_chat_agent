@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getAudioManager, AudioManager } from '../lib/audio-manager';
-import { RealtimeAPIClient, AgentState } from '../lib/realtime-client';
+import { RealtimeAPIClient, type AgentState } from '../lib/realtime-client';
 import { executeTool, registerToolsFromServer } from '../lib/tools-registry';
 import type { RealtimeConfig } from '../types/voice-agent';
 
