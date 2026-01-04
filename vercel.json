@@ -2,6 +2,8 @@
   "rewrites": [
     { "source": "/embed/agent", "destination": "/" },
     { "source": "/embed/agent/(.*)", "destination": "/" },
+    { "source": "/embed/voice", "destination": "/" },
+    { "source": "/embed/voice/(.*)", "destination": "/" },
     { "source": "/widget", "destination": "/" },
     { "source": "/widget/(.*)", "destination": "/" }
   ]
