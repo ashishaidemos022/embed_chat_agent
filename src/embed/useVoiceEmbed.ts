@@ -3,7 +3,7 @@ import { getAudioManager, AudioManager } from '../lib/audio-manager';
 import { RealtimeAPIClient, type AgentState } from '../lib/realtime-client';
 import { executeTool, registerToolsFromServer } from '../lib/tools-registry';
 import type { RealtimeConfig } from '../types/voice-agent';
-import { buildEmbedFunctionUrl, resolveEmbedApiBase } from './embed-api';
+import { buildEmbedFunctionUrl, resolveEmbedApiBase, resolveEmbedUsageBase } from './embed-api';
 
 type TranscriptBuffers = {
   user: Record<string, string>;
@@ -107,14 +107,22 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
     () => buildEmbedFunctionUrl(apiBase, 'voice-ephemeral-key'),
     [apiBase]
   );
+  const usageBase = useMemo(() => resolveEmbedUsageBase(), []);
+  const embedUsageUrl = useMemo(
+    () => buildEmbedFunctionUrl(usageBase || apiBase, 'embed-usage'),
+    [apiBase, usageBase]
+  );
   const sessionStorageKey = useMemo(() => `va-voice-embed-session-${publicId}`, [publicId]);
   const clientSessionIdRef = useRef<string | null>(null);
   const userMicIntentRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
   const agentConfigIdRef = useRef<string | null>(null);
+  const modelRef = useRef<string | null>(null);
   const loadedToolsConfigRef = useRef<string | null>(null);
   const lastUserTextRef = useRef<string>('');
   const agentMetaRef = useRef<UseVoiceEmbedResult['agentMeta']>(null);
+  const usageHandledRef = useRef(false);
+  const usageBaseWarnedRef = useRef(false);
 
   const updateSessionId = useCallback((value: string | null) => {
     sessionIdRef.current = value;
@@ -338,11 +346,56 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
 
     client.on('response.created', () => {
       setAgentState('thinking');
+      usageHandledRef.current = false;
     });
 
-    client.on('response.done', () => {
+    const reportUsage = async (usage: any) => {
+      if (usageHandledRef.current) return;
+      const sessionIdValue = sessionIdRef.current;
+      if (!usage || !embedUsageUrl || !publicId || !sessionIdValue) return;
+      if (!usageBaseWarnedRef.current) {
+        const supabaseBase = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || '';
+        if (supabaseBase) {
+          try {
+            const usageOrigin = new URL(embedUsageUrl).origin;
+            const supabaseOrigin = new URL(supabaseBase).origin;
+            if (usageOrigin !== supabaseOrigin) {
+              usageBaseWarnedRef.current = true;
+              console.warn('[voice-embed] embed-usage URL does not match Supabase origin', {
+                usageOrigin,
+                supabaseOrigin
+              });
+            }
+          } catch {
+            // ignore malformed URLs
+          }
+        }
+      }
+      usageHandledRef.current = true;
+      try {
+        await fetch(embedUsageUrl, {
+          method: 'POST',
+          headers: REQUEST_HEADERS,
+          body: JSON.stringify({
+            public_id: publicId,
+            session_id: sessionIdValue,
+            model: modelRef.current,
+            usage
+          })
+        });
+      } catch (err) {
+        console.warn('[voice-embed] failed to record usage', err);
+      }
+    };
+
+    client.on('response.done', (event: any) => {
       setAgentState('idle');
       setLiveAssistantTranscript('');
+      reportUsage(event?.response?.usage);
+    });
+
+    client.on('usage.reported', (event: any) => {
+      reportUsage(event?.usage);
     });
 
     client.on('function_call', async (event: any) => {
@@ -468,6 +521,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
         apiKey: json.token,
         allowInterruptions: true
       });
+      modelRef.current = realtimeConfig.model;
       audioManagerRef.current = audioManager;
       realtimeClientRef.current = realtimeClient;
       attachRealtimeHandlers(realtimeClient, audioManager);

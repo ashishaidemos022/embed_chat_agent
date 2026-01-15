@@ -1,5 +1,6 @@
 type EmbedRuntimeConfig = {
   apiBaseUrl?: string;
+  usageBaseUrl?: string;
 };
 
 type EmbedWindow = Window & {
@@ -23,7 +24,26 @@ export function resolveEmbedApiBase(): string | null {
     win.MyVoiceAgent?.apiBaseUrl ||
     win.myVoiceAgent?.apiBaseUrl;
   const envBase = import.meta.env.VITE_EMBED_API_BASE_URL as string | undefined;
-  const base = queryBase || globalBase || envBase || window.location.origin;
+  const supabaseBase = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+  const base = queryBase || globalBase || envBase || supabaseBase || window.location.origin;
+  return base ? base.replace(/\/$/, '') : null;
+}
+
+export function resolveEmbedUsageBase(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  const queryBase =
+    params.get('usage_base') ||
+    params.get('usageBase') ||
+    params.get('usageBaseUrl');
+  const win = window as EmbedWindow;
+  const globalBase =
+    win.VoiceAgentEmbed?.usageBaseUrl ||
+    win.AgenticChat?.usageBaseUrl ||
+    win.MyVoiceAgent?.usageBaseUrl ||
+    win.myVoiceAgent?.usageBaseUrl;
+  const envBase = import.meta.env.VITE_EMBED_USAGE_BASE_URL as string | undefined;
+  const base = queryBase || globalBase || envBase;
   return base ? base.replace(/\/$/, '') : null;
 }
 
