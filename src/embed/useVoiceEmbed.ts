@@ -112,6 +112,10 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
     () => buildEmbedFunctionUrl(usageBase || apiBase, 'embed-usage'),
     [apiBase, usageBase]
   );
+  const embedMessageUrl = useMemo(
+    () => buildEmbedFunctionUrl(apiBase, 'embed-message'),
+    [apiBase]
+  );
   const sessionStorageKey = useMemo(() => `va-voice-embed-session-${publicId}`, [publicId]);
   const clientSessionIdRef = useRef<string | null>(null);
   const userMicIntentRef = useRef(false);
@@ -123,6 +127,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
   const agentMetaRef = useRef<UseVoiceEmbedResult['agentMeta']>(null);
   const usageHandledRef = useRef(false);
   const usageBaseWarnedRef = useRef(false);
+  const loggedTranscriptIdsRef = useRef<Set<string>>(new Set());
 
   const updateSessionId = useCallback((value: string | null) => {
     sessionIdRef.current = value;
@@ -280,6 +285,32 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
       }
     });
 
+    const logEmbedMessage = async (role: 'user' | 'assistant', content: string, itemId: string | undefined) => {
+      const sessionIdValue = sessionIdRef.current;
+      if (!embedMessageUrl || !publicId || !sessionIdValue) return;
+      const key = `${role}:${itemId || content.slice(0, 32)}`;
+      if (loggedTranscriptIdsRef.current.has(key)) return;
+      loggedTranscriptIdsRef.current.add(key);
+      try {
+        await fetch(embedMessageUrl, {
+          method: 'POST',
+          headers: REQUEST_HEADERS,
+          body: JSON.stringify({
+            public_id: publicId,
+            session_id: sessionIdValue,
+            role,
+            content,
+            audio_metadata: {
+              source: 'voice-embed',
+              item_id: itemId || null
+            }
+          })
+        });
+      } catch (err) {
+        console.warn('[voice-embed] failed to log embed message', err);
+      }
+    };
+
     client.on('transcript.done', async (event: any) => {
       const isUser = event.role === 'user';
       const buffers = isUser ? transcriptsRef.current.user : transcriptsRef.current.assistant;
@@ -309,6 +340,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
         };
         setMessages((prev) => [...prev, nextMessage].slice(-30));
         lastUserTextRef.current = transcriptText;
+        logEmbedMessage('user', transcriptText, itemId);
       }
 
       delete buffers[itemId];
@@ -325,6 +357,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
           createdAt: new Date().toISOString()
         };
         setMessages((prev) => [...prev, nextMessage].slice(-30));
+        logEmbedMessage('assistant', transcriptText, itemId);
         if (transcriptsRef.current.activeAssistantId === itemId) {
           transcriptsRef.current.activeAssistantId = null;
           setLiveAssistantTranscript('');
