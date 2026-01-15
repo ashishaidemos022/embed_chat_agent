@@ -349,10 +349,24 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
       usageHandledRef.current = false;
     });
 
+    const normalizeUsage = (usage: any) => {
+      if (!usage || typeof usage !== 'object') return null;
+      const inputTokens = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0) || 0;
+      const outputTokens = Number(usage.completion_tokens ?? usage.output_tokens ?? 0) || 0;
+      const totalTokens = Number(usage.total_tokens ?? usage.totalTokens ?? inputTokens + outputTokens) || 0;
+      if (!inputTokens && !outputTokens && !totalTokens) return null;
+      return {
+        prompt_tokens: inputTokens,
+        completion_tokens: outputTokens,
+        total_tokens: totalTokens || inputTokens + outputTokens
+      };
+    };
+
     const reportUsage = async (usage: any) => {
       if (usageHandledRef.current) return;
+      const normalizedUsage = normalizeUsage(usage);
       const sessionIdValue = sessionIdRef.current;
-      if (!usage || !embedUsageUrl || !publicId || !sessionIdValue) return;
+      if (!normalizedUsage || !embedUsageUrl || !publicId || !sessionIdValue) return;
       if (!usageBaseWarnedRef.current) {
         const supabaseBase = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || '';
         if (supabaseBase) {
@@ -380,7 +394,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
             public_id: publicId,
             session_id: sessionIdValue,
             model: modelRef.current,
-            usage
+            usage: normalizedUsage
           })
         });
       } catch (err) {
