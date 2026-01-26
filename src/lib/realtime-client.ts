@@ -484,6 +484,26 @@ export class RealtimeAPIClient {
     });
   }
 
+  sendUserMessage(text: string): void {
+    if (!text || !text.trim()) {
+      return;
+    }
+    this.send({
+      type: 'conversation.item.create',
+      item: {
+        type: 'message',
+        role: 'user',
+        content: [
+          {
+            type: 'input_text',
+            text: text.trim()
+          }
+        ]
+      }
+    });
+    this.requestResponse();
+  }
+
   cancelResponse(options?: { suppressState?: boolean }): void {
     if (!this.hasActiveResponse()) {
       console.warn('Cancel requested but no active response');

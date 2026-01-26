@@ -50,6 +50,14 @@ interface ToolSelectionState {
   n8nSelections: N8NSelectionInfo[];
 }
 
+type ToolSelectionRow = {
+  tool_name: string;
+  tool_source: 'mcp' | 'n8n' | null;
+  n8n_integration_id: string | null;
+  metadata: Record<string, any> | null;
+  user_id: string | null;
+};
+
 export interface ToolExecutionContext {
   sessionId?: string;
   chatSessionId?: string;
@@ -253,7 +261,7 @@ export async function loadMCPTools(configId?: string, userId?: string): Promise<
         .from('va_mcp_tools')
         .select('*')
         .eq('is_enabled', true)
-        .in('connection_id', connections.map(c => c.id));
+        .in('connection_id', connections.map((c: { id: string }) => c.id));
 
       if (toolsError) {
         console.error('Failed to load MCP tools:', toolsError);
@@ -393,8 +401,8 @@ export async function loadToolSelectionForConfig(
     }
 
     const ownedTools =
-      userId && selectedTools.some(tool => tool.user_id === userId)
-        ? selectedTools.filter(tool => tool.user_id === userId)
+      userId && selectedTools.some((tool: ToolSelectionRow) => tool.user_id === userId)
+        ? selectedTools.filter((tool: ToolSelectionRow) => tool.user_id === userId)
         : selectedTools;
 
     console.log('[tools] Loaded tool selections', {
@@ -404,8 +412,8 @@ export async function loadToolSelectionForConfig(
       ownedCount: ownedTools.length
     });
 
-    const nonSentinel = ownedTools.filter(tool => tool.tool_name !== SELECTION_SENTINEL);
-    const hasSentinel = ownedTools.some(tool => tool.tool_name === SELECTION_SENTINEL);
+    const nonSentinel = ownedTools.filter((tool: ToolSelectionRow) => tool.tool_name !== SELECTION_SENTINEL);
+    const hasSentinel = ownedTools.some((tool: ToolSelectionRow) => tool.tool_name === SELECTION_SENTINEL);
 
     if (nonSentinel.length === 0) {
       selectedMcpToolNames = [];
@@ -421,23 +429,25 @@ export async function loadToolSelectionForConfig(
       };
     }
 
-    const mcpRows = nonSentinel.filter(tool => tool.tool_source === 'mcp');
-    const n8nRows = nonSentinel.filter(tool => tool.tool_source === 'n8n');
+    const mcpRows = nonSentinel.filter((tool: ToolSelectionRow) => tool.tool_source === 'mcp');
+    const n8nRows = nonSentinel.filter((tool: ToolSelectionRow) => tool.tool_source === 'n8n');
 
-    selectedMcpToolNames = mcpRows.map(tool => tool.tool_name);
-    selectedWebhookToolNames = n8nRows.map(tool => tool.tool_name);
+    selectedMcpToolNames = mcpRows.map((tool: ToolSelectionRow) => tool.tool_name);
+    selectedWebhookToolNames = n8nRows.map((tool: ToolSelectionRow) => tool.tool_name);
+    const mcpNames = selectedMcpToolNames ?? [];
+    const webhookNames = selectedWebhookToolNames ?? [];
 
     console.log('🔧 Loaded tool selections', {
-      mcp: selectedMcpToolNames.length,
-      n8n: selectedWebhookToolNames.length
+      mcp: mcpNames.length,
+      n8n: webhookNames.length
     });
 
     return {
       mcpToolNames: selectedMcpToolNames,
       n8nToolNames: selectedWebhookToolNames,
       n8nSelections: n8nRows
-        .filter(tool => !!tool.n8n_integration_id)
-        .map(tool => ({
+        .filter((tool: ToolSelectionRow) => !!tool.n8n_integration_id)
+        .map((tool: ToolSelectionRow) => ({
           integrationId: tool.n8n_integration_id as string,
           metadata: tool.metadata || {}
         }))
