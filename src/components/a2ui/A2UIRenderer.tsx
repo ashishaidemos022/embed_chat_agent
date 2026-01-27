@@ -355,17 +355,19 @@ function A2UICalendar({ node }: { node: A2UIElement }) {
           <div className="a2ui-calendar__empty">No availability listed.</div>
         ) : (
           slots.map((slot, idx) => {
-            const status = slot.status || 'available';
+            const statusRaw = typeof slot.status === 'string' ? slot.status.toLowerCase() : 'available';
+            const status = statusRaw === 'booked' || statusRaw === 'unavailable' ? statusRaw : 'available';
             const className =
               status === 'available'
                 ? 'a2ui-slot a2ui-slot--available'
                 : status === 'booked'
                 ? 'a2ui-slot a2ui-slot--booked'
                 : 'a2ui-slot a2ui-slot--unavailable';
+            const label = slot.label || (status === 'available' ? 'Available' : status === 'booked' ? 'Booked' : 'Unavailable');
             return (
               <div key={`${slot.time}-${idx}`} className={className}>
                 <span className="a2ui-slot__time">{slot.time}</span>
-                {slot.label && <span className="a2ui-slot__label">{slot.label}</span>}
+                <span className="a2ui-slot__label">{label}</span>
               </div>
             );
           })
