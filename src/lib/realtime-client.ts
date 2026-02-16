@@ -13,6 +13,8 @@ export type RealtimeEvent =
   | { type: 'transcript.delta'; delta: string; role: 'user' | 'assistant'; itemId?: string }
   | { type: 'transcript.done'; transcript: string; role: 'user' | 'assistant'; itemId?: string }
   | { type: 'transcript.reset'; role: 'user' | 'assistant'; itemId?: string }
+  | { type: 'text.delta'; delta: string }
+  | { type: 'text.done'; text: string }
   | { type: 'response.created'; id?: string }
   | { type: 'response.done'; response: any }
   | { type: 'usage.reported'; usage: any; response?: any }
@@ -25,6 +27,7 @@ type RealtimeClientOptions = {
   apiKey?: string;
   tools?: ReturnType<typeof getToolSchemas>;
   allowInterruptions?: boolean;
+  textOnly?: boolean;
 };
 
 export class RealtimeAPIClient {
@@ -46,12 +49,14 @@ export class RealtimeAPIClient {
   private activeResponseCount = 0;
   private cancelPending = false;
   private allowInterruptions: boolean;
+  private textOnly: boolean;
 
   constructor(config: RealtimeConfig, options?: RealtimeClientOptions) {
     this.config = config;
     this.overrideApiKey = options?.apiKey;
     this.overrideTools = options?.tools;
     this.allowInterruptions = options?.allowInterruptions ?? true;
+    this.textOnly = options?.textOnly ?? false;
   }
 
   updateSessionConfig(newConfig: RealtimeConfig): void {
@@ -162,14 +167,12 @@ export class RealtimeAPIClient {
     const ragInstructions = this.config.rag_mode === 'guardrail'
       ? `${this.config.instructions}\n\nIf relevant knowledge from the approved knowledge base is unavailable, respond with "I do not have enough knowledge to answer that yet."\n\n${languageGuard}`
       : `${this.config.instructions}\n\n${languageGuard}`;
-    const sessionConfig = {
+    const sessionConfig: any = {
       type: 'session.update',
       session: {
-        modalities: ['text', 'audio'],
+        modalities: this.textOnly ? ['text'] : ['text', 'audio'],
         instructions: ragInstructions,
-        voice: this.config.voice,
         input_audio_format: 'pcm16',
-        output_audio_format: 'pcm16',
         input_audio_transcription: {
           model: 'gpt-4o-transcribe',
           language: 'en'
@@ -186,6 +189,10 @@ export class RealtimeAPIClient {
         max_response_output_tokens: this.config.max_response_output_tokens
       }
     };
+    if (!this.textOnly) {
+      sessionConfig.session.voice = this.config.voice;
+      sessionConfig.session.output_audio_format = 'pcm16';
+    }
 
     console.log('📤 Sending session.update', {
       turnDetection: sessionConfig.session.turn_detection,
@@ -265,11 +272,13 @@ export class RealtimeAPIClient {
         break;
 
       case 'response.audio.delta':
+        if (this.textOnly) break;
         this.setAgentState('speaking');
         this.emit({ type: 'audio.delta', delta: message.delta });
         break;
 
       case 'response.audio.done':
+        if (this.textOnly) break;
         this.emit({ type: 'audio.done' });
         break;
 
@@ -293,12 +302,24 @@ export class RealtimeAPIClient {
 
       // Newer Realtime event names (output_*). Mirror the legacy audio.* behavior.
       case 'response.output_audio.delta':
+        if (this.textOnly) break;
         this.setAgentState('speaking');
         this.emit({ type: 'audio.delta', delta: message.delta });
         break;
 
       case 'response.output_audio.done':
+        if (this.textOnly) break;
         this.emit({ type: 'audio.done' });
+        break;
+
+      case 'response.output_text.delta':
+      case 'response.text.delta':
+        this.emit({ type: 'text.delta', delta: message.delta || '' });
+        break;
+
+      case 'response.output_text.done':
+      case 'response.text.done':
+        this.emit({ type: 'text.done', text: message.output_text || message.text || '' });
         break;
 
       case 'response.output_audio_transcript.delta':
@@ -317,16 +338,6 @@ export class RealtimeAPIClient {
           role: 'assistant',
           itemId: message.item_id
         });
-        break;
-
-      case 'response.text.delta':
-      case 'response.output_text.delta':
-        console.log('📝 Text delta:', message.delta ?? message.text_delta);
-        break;
-
-      case 'response.text.done':
-      case 'response.output_text.done':
-        console.log('📝 Text done:', message.text ?? message.output_text);
         break;
 
       case 'response.output_item.added':

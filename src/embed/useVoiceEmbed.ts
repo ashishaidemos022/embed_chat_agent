@@ -5,6 +5,9 @@ import { executeTool, registerToolsFromServer } from '../lib/tools-registry';
 import type { RealtimeConfig } from '../types/voice-agent';
 import { buildEmbedFunctionUrl, resolveEmbedApiBase, resolveEmbedUsageBase } from './embed-api';
 import { formatA2UIEventMessage, type A2UIEvent } from '../lib/a2ui';
+import type { VoiceAdapter } from '../lib/voice-adapters/types';
+import { ElevenLabsVoiceAdapter } from '../lib/voice-adapters/elevenlabs-adapter';
+import { requestElevenLabsEmbedToken } from './elevenlabs-gateway';
 
 type TranscriptBuffers = {
   user: Record<string, string>;
@@ -42,6 +45,7 @@ export type UseVoiceEmbedResult = {
     name: string;
     summary?: string | null;
     voice?: string | null;
+    voice_provider?: 'openai_realtime' | 'elevenlabs_tts' | null;
     a2ui_enabled?: boolean;
   } | null;
   isLoadingMeta: boolean;
@@ -97,7 +101,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
   const [appearance, setAppearance] = useState<VoiceEmbedAppearance | null>(null);
 
   const audioManagerRef = useRef<AudioManager | null>(null);
-  const realtimeClientRef = useRef<RealtimeAPIClient | null>(null);
+  const realtimeClientRef = useRef<VoiceAdapter | null>(null);
   const waveformIntervalRef = useRef<number | null>(null);
   const transcriptsRef = useRef<TranscriptBuffers>({
     user: {},
@@ -177,6 +181,10 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
         reason: options?.reason
       });
 
+      if (realtimeClientRef.current?.stopCapture) {
+        realtimeClientRef.current.stopCapture();
+      }
+
       if (audioManagerRef.current) {
         audioManagerRef.current.stopCapture();
         audioManagerRef.current.stopPlayback();
@@ -222,7 +230,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
       return;
     }
     const content = formatA2UIEventMessage(event);
-    realtimeClientRef.current.sendUserMessage(content);
+    realtimeClientRef.current.sendUserMessage?.(content);
     const nextMessage: VoiceEmbedMessage = {
       id: crypto.randomUUID(),
       role: 'user',
@@ -232,7 +240,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
     setMessages((prev) => [...prev, nextMessage].slice(-30));
   }, []);
 
-  function attachRealtimeHandlers(client: RealtimeAPIClient, audioManager: AudioManager) {
+  function attachRealtimeHandlers(client: VoiceAdapter, audioManager: AudioManager) {
     client.on('connected', () => {
       console.debug(EMBED_LOG_PREFIX, 'Realtime connected');
       setIsConnected(true);
@@ -396,6 +404,22 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
       }
     });
 
+    client.on('text.done', (event: any) => {
+      if (agentMetaRef.current?.voice_provider !== 'elevenlabs_tts') {
+        return;
+      }
+      const text = (event?.text || '').trim();
+      if (!text) return;
+      const nextMessage: VoiceEmbedMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: text,
+        createdAt: new Date().toISOString()
+      };
+      setMessages((prev) => [...prev, nextMessage].slice(-30));
+      setLiveAssistantTranscript('');
+    });
+
     client.on('response.created', () => {
       setAgentState('thinking');
       usageHandledRef.current = false;
@@ -557,22 +581,37 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
       }
       setRtcEnabled(Boolean(json?.settings?.rtc_enabled ?? true));
       setAppearance((json?.settings?.appearance as VoiceEmbedAppearance) || null);
+      const provider = json?.agent?.voice_provider || 'openai_realtime';
+      if (provider === 'elevenlabs_tts' && !json?.agent?.voice_id) {
+        throw new Error('ElevenLabs voice_id is missing for this embed preset');
+      }
+      if (provider === 'elevenlabs_tts' && !json?.token) {
+        throw new Error('OpenAI realtime token is missing for ElevenLabs embed session');
+      }
       setAgentMeta((prev) => ({
         name: json?.agent?.name || prev?.name || 'Voice Agent',
         summary: json?.agent?.summary || prev?.summary || null,
-        voice: sanitizeVoice(json?.agent?.voice || prev?.voice || null),
+        voice: provider === 'elevenlabs_tts'
+          ? (json?.agent?.voice_id || prev?.voice || null)
+          : sanitizeVoice(json?.agent?.voice || prev?.voice || null),
+        voice_provider: provider,
         a2ui_enabled: Boolean(json?.agent?.a2ui_enabled)
       }));
       agentMetaRef.current = {
         name: json?.agent?.name || 'Voice Agent',
         summary: json?.agent?.summary || null,
-        voice: sanitizeVoice(json?.agent?.voice || null),
+        voice: provider === 'elevenlabs_tts'
+          ? (json?.agent?.voice_id || null)
+          : sanitizeVoice(json?.agent?.voice || null),
+        voice_provider: provider,
         a2ui_enabled: Boolean(json?.agent?.a2ui_enabled)
       };
 
       const realtimeConfig: RealtimeConfig = {
         model: json?.agent?.model || 'gpt-4o-realtime-preview',
         voice: sanitizeVoice(json?.agent?.voice),
+        voice_provider: provider,
+        voice_id: json?.agent?.voice_id ?? null,
         instructions: json?.agent?.instructions || 'You are a helpful AI voice assistant.',
         temperature: 0.8,
         max_response_output_tokens: 1024,
@@ -585,10 +624,27 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
       };
 
       const audioManager = getAudioManager();
-      const realtimeClient = new RealtimeAPIClient(realtimeConfig, {
-        apiKey: json.token,
-        allowInterruptions: true
-      });
+      let realtimeClient: VoiceAdapter;
+      if (provider === 'elevenlabs_tts') {
+        const gateway = await requestElevenLabsEmbedToken({
+          publicId,
+          sessionId: json.session_id,
+          origin: window.location.origin
+        });
+        realtimeClient = new ElevenLabsVoiceAdapter(realtimeConfig, {
+          gatewayUrl: gateway.gateway_ws_url,
+          token: gateway.token,
+          agentId: nextConfigId || '',
+          sessionId: json.session_id
+        }, {
+          apiKey: json.token
+        });
+      } else {
+        realtimeClient = new RealtimeAPIClient(realtimeConfig, {
+          apiKey: json.token,
+          allowInterruptions: true
+        });
+      }
       modelRef.current = realtimeConfig.model;
       audioManagerRef.current = audioManager;
       realtimeClientRef.current = realtimeClient;
@@ -614,9 +670,13 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
     }
     console.debug(EMBED_LOG_PREFIX, 'Starting capture');
     await audioManagerRef.current.initialize();
-    await audioManagerRef.current.startCapture((data: Int16Array) => {
-      realtimeClientRef.current?.sendAudio(data);
-    });
+    if (typeof realtimeClientRef.current.startCapture === 'function') {
+      await realtimeClientRef.current.startCapture();
+    } else {
+      await audioManagerRef.current.startCapture((data: Int16Array) => {
+        realtimeClientRef.current?.sendAudio(data);
+      });
+    }
     setIsRecording(true);
     cleanupWaveformInterval();
     waveformIntervalRef.current = window.setInterval(() => {
@@ -649,10 +709,17 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
       if (!response.ok) {
         throw new Error(json?.error || 'Unable to load voice embed');
       }
+      const provider = json?.agent?.voice_provider || 'openai_realtime';
+      if (provider === 'elevenlabs_tts' && !json?.agent?.voice_id) {
+        throw new Error('ElevenLabs voice_id is missing for this embed preset');
+      }
       setAgentMeta((prev) => ({
         name: json?.agent?.name || prev?.name || 'Voice Agent',
         summary: json?.agent?.summary || prev?.summary || null,
-        voice: sanitizeVoice(json?.agent?.voice || prev?.voice || null),
+        voice: provider === 'elevenlabs_tts'
+          ? (json?.agent?.voice_id || prev?.voice || null)
+          : sanitizeVoice(json?.agent?.voice || prev?.voice || null),
+        voice_provider: provider,
         a2ui_enabled: Boolean(json?.agent?.a2ui_enabled)
       }));
       updateAgentConfigId(json?.agent?.id || null);

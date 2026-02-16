@@ -48,6 +48,10 @@ import type { RagMode } from './rag';
 export interface RealtimeConfig {
   model: string;
   voice: string;
+  voice_provider?: 'openai_realtime' | 'elevenlabs_tts';
+  voice_id?: string | null;
+  voice_provider_key_id?: string | null;
+  voice_provider_config?: Record<string, any> | null;
   instructions: string;
   temperature: number;
   max_response_output_tokens: number;
@@ -57,6 +61,7 @@ export interface RealtimeConfig {
     prefix_padding_ms?: number;
     silence_duration_ms?: number;
   } | null;
+  a2ui_enabled?: boolean;
   rag_enabled?: boolean;
   rag_mode?: RagMode;
   knowledge_vector_store_ids?: string[];
