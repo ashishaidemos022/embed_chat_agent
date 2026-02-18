@@ -74,10 +74,27 @@ const REQUEST_HEADERS = {
   'Content-Type': 'application/json'
 };
 const SUPPORTED_REALTIME_VOICES = ['alloy', 'ash', 'ballad', 'coral', 'echo', 'sage', 'shimmer', 'verse', 'marin', 'cedar'];
+const DEFAULT_TURN_DETECTION: NonNullable<RealtimeConfig['turn_detection']> = {
+  type: 'server_vad',
+  threshold: 0.75,
+  prefix_padding_ms: 150,
+  silence_duration_ms: 700
+};
 const sanitizeVoice = (voice?: string | null) => {
   if (!voice) return 'alloy';
   const normalized = voice.toLowerCase();
   return SUPPORTED_REALTIME_VOICES.includes(normalized) ? normalized : 'alloy';
+};
+const resolveTurnDetection = (raw: any): RealtimeConfig['turn_detection'] => {
+  if (raw === null) return null;
+  if (typeof raw === 'undefined') return DEFAULT_TURN_DETECTION;
+  if (raw.type !== 'server_vad') return DEFAULT_TURN_DETECTION;
+  return {
+    type: 'server_vad',
+    threshold: raw.threshold ?? DEFAULT_TURN_DETECTION.threshold,
+    prefix_padding_ms: raw.prefix_padding_ms ?? DEFAULT_TURN_DETECTION.prefix_padding_ms,
+    silence_duration_ms: raw.silence_duration_ms ?? DEFAULT_TURN_DETECTION.silence_duration_ms
+  };
 };
 const EMBED_LOG_PREFIX = '[voice-embed]';
 
@@ -615,12 +632,7 @@ export function useVoiceEmbedSession(publicId: string): UseVoiceEmbedResult {
         instructions: json?.agent?.instructions || 'You are a helpful AI voice assistant.',
         temperature: 0.8,
         max_response_output_tokens: 1024,
-        turn_detection: {
-          type: 'server_vad',
-          threshold: 0.75,
-          prefix_padding_ms: 150,
-          silence_duration_ms: 700
-        }
+        turn_detection: resolveTurnDetection(json?.agent?.turn_detection)
       };
 
       const audioManager = getAudioManager();
