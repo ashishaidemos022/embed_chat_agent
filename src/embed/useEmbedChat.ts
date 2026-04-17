@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { buildEmbedFunctionUrl, resolveEmbedApiBase } from './embed-api';
 
 export type EmbedMessage = {
@@ -52,6 +52,26 @@ type RagAugmentationResult = {
 const REQUEST_HEADERS = {
   'Content-Type': 'application/json'
 };
+
+async function parseResponseJson(response: Response) {
+  const raw = await response.text();
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return { raw };
+  }
+}
+
+function getResponseError(response: Response, json: any, fallback: string) {
+  return (
+    json?.error ||
+    json?.message ||
+    json?.details ||
+    json?.raw ||
+    `${fallback} (${response.status})`
+  );
+}
 
 function createStorageKey(publicId: string) {
   return `va-embed-history-${publicId}`;
@@ -108,6 +128,7 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const apiBase = useMemo(() => resolveEmbedApiBase(), []);
+  const loadedPublicIdRef = useRef<string | null>(null);
   const agentChatUrl = useMemo(
     () => buildEmbedFunctionUrl(apiBase, 'agent-chat'),
     [apiBase]
@@ -143,6 +164,8 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
   }, [messages, sessionId, storageKey]);
 
   const loadMetadata = useCallback(async () => {
+    if (loadedPublicIdRef.current === publicId) return;
+    loadedPublicIdRef.current = publicId;
     setIsLoadingMeta(true);
     try {
       if (!agentChatUrl) {
@@ -154,10 +177,10 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
         method: 'GET',
         headers: REQUEST_HEADERS
       });
+      const json = await parseResponseJson(response);
       if (!response.ok) {
-        throw new Error('Embed not found');
+        throw new Error(getResponseError(response, json, 'Embed metadata request failed'));
       }
-      const json = await response.json();
       const knowledgeSpaceIds = Array.isArray(json.agent?.knowledge_spaces)
         ? json.agent.knowledge_spaces
             .map((space: any) => space?.space_id)
@@ -178,6 +201,7 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
         name: 'AI Agent',
         summary: err?.message || 'Unable to load agent metadata'
       });
+      loadedPublicIdRef.current = null;
     } finally {
       setIsLoadingMeta(false);
     }
@@ -255,9 +279,9 @@ export function useEmbedChat(publicId: string, options?: { persist?: boolean }) 
           headers: REQUEST_HEADERS,
           body: JSON.stringify(payload)
         });
-        const json = await response.json();
+        const json = await parseResponseJson(response);
         if (!response.ok) {
-          throw new Error(json?.error || 'Agent request failed');
+          throw new Error(getResponseError(response, json, 'Agent request failed'));
         }
         setSessionId(json.session_id);
         const assistantMessage: EmbedMessage = {
